@@ -1,9 +1,13 @@
 # Data (too large + contains medical imaging data)
+data/biopsy_overlays/
+data/dicom/
 data/patches/
 data/grids/
 data/edges/
 data/*.csv
 data/*.png
+
+*.tar.gz
 
 # Python
 __pycache__/
