@@ -114,4 +114,4 @@ All three models share identical train/validation/test splits (15% subjects held
 
 ## Citation
 
-Dataset: TCIA Prostate-MRI-US-Biopsy (2020). The Cancer Imaging Archive.
+Natarajan, S., Priester, A., Margolis, D., Huang, J., & Marks, L. (2020). *Prostate MRI and Ultrasound With Pathology and Coordinates of Tracked Biopsy (Prostate-MRI-US-Biopsy)* (version 2) [Data set]. The Cancer Imaging Archive. https://doi.org/10.7937/TCIA.2020.A61IOC1A
