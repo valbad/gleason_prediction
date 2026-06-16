@@ -21,3 +21,24 @@ __pycache__/
 
 # OS
 .DS_Store
+
+gleason_project_tracking_note_v2.md
+# Current TCIA / Gleason data folders
+data/raw/
+data/processed/
+data/share/
+data/needle_voxels/
+
+# Medical / imaging / mesh / archive files
+*.tcia
+*.dcm
+*.nii
+*.nii.gz
+*.stl
+*.fcsv
+*.mrml
+*.zip
+*.parquet
+
+# Generated heavy result tables
+reports/*.csv
