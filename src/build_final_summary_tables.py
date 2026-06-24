@@ -620,6 +620,147 @@ def build_core_count_summary(out_csv: Path, out_md: Path) -> None:
     _write_md(md, out_md, "core_count_summary.md")
 
 
+# ── 6. Calibration table ─────────────────────────────────────────────────────
+
+def _calib_interp(
+    bss_before: float,
+    bss_after: float,
+    ece_before: float,
+    ece_after: float,
+    low_bin_frac_after: float,
+) -> str:
+    """Build a short interpretation string from calibration metrics."""
+    parts: list[str] = []
+
+    # ECE improvement
+    ece_delta = ece_before - ece_after
+    if not np.isnan(ece_delta) and ece_delta > 0.01:
+        parts.append("Recalibration improves calibration.")
+
+    # Brier skill score sign flip
+    if (not np.isnan(bss_before) and not np.isnan(bss_after)
+            and bss_before < 0 <= bss_after):
+        parts.append(
+            "Raw probabilities poor; recalibrated probabilities usable with caution."
+        )
+
+    # Low-bin concentration (only when detectable from the bins data)
+    if not np.isnan(low_bin_frac_after) and low_bin_frac_after > 0.90:
+        parts.append(
+            "After recalibration, predictions concentrate in the lowest probability "
+            "bin; absolute risk estimates remain conservative."
+        )
+
+    # Mandatory caution
+    parts.append(
+        "Discrimination / ranking should be interpreted separately from "
+        "absolute risk calibration."
+    )
+
+    return " ".join(parts)
+
+
+def build_calibration_table(out_csv: Path, out_md: Path) -> None:
+    print("\n[6] Calibration table")
+
+    df = _load(REPORTS_DIR / "calibration_analysis.csv", "calibration")
+    if df is None:
+        _write_md(
+            _missing_section("Calibration Analysis", "calibration_analysis.csv"),
+            out_md, "calibration.md (empty)",
+        )
+        return
+
+    metrics = df[df["table"] == "metrics"].copy()
+    if metrics.empty:
+        warnings.warn("No 'metrics' rows in calibration_analysis.csv")
+        return
+
+    # Split before/after and index on (label_col, model) for easy pairing
+    before = metrics[metrics["calibration"] == "before"].set_index(["label_col", "model"])
+    after  = metrics[metrics["calibration"] == "after"].set_index(["label_col", "model"])
+
+    # Low-bin concentration: fraction of test samples in bin_index == 1 after recalibration
+    bins = df[(df["table"] == "bins") & (df["calibration"] == "after")].copy()
+    low_bin_fracs: dict[tuple, float] = {}
+    if not bins.empty and "bin_index" in bins.columns:
+        for (lc, model), grp in bins.groupby(["label_col", "model"]):
+            total = grp["n_cores"].sum()
+            bin1  = grp[grp["bin_index"] == 1]["n_cores"].sum()
+            low_bin_fracs[(lc, model)] = float(bin1 / total) if total > 0 else np.nan
+
+    rows_out: list[dict] = []
+    for (lc, model) in before.index:
+        b = before.loc[(lc, model)]
+        a = after.loc[(lc, model)] if (lc, model) in after.index else pd.Series(dtype=float)
+
+        def _get(src, col):
+            try:
+                v = src[col]
+                return float(v) if not (isinstance(v, float) and np.isnan(v)) else np.nan
+            except (KeyError, TypeError):
+                return np.nan
+
+        brier_b = _get(b, "brier_score");         brier_a = _get(a, "brier_score")
+        bss_b   = _get(b, "brier_skill_score");   bss_a   = _get(a, "brier_skill_score")
+        ece_b   = _get(b, "ece");                 ece_a   = _get(a, "ece")
+        slope_b = _get(b, "cal_slope");           slope_a = _get(a, "cal_slope")
+        int_b   = _get(b, "cal_intercept");       int_a   = _get(a, "cal_intercept")
+
+        low_frac = low_bin_fracs.get((lc, model), np.nan)
+        interp   = _calib_interp(bss_b, bss_a, ece_b, ece_a, low_frac)
+
+        rows_out.append({
+            "label_col":                lc,
+            "endpoint":                 LABEL_SHORT.get(lc, lc),
+            "model":                    model,
+            "brier_before":             _f(brier_b),
+            "brier_after":              _f(brier_a),
+            "brier_skill_score_before": _f(bss_b),
+            "brier_skill_score_after":  _f(bss_a),
+            "ece_before":               _f(ece_b),
+            "ece_after":                _f(ece_a),
+            "cal_slope_before":         _f(slope_b),
+            "cal_slope_after":          _f(slope_a),
+            "cal_intercept_before":     _f(int_b),
+            "cal_intercept_after":      _f(int_a),
+            "interpretation":           interp,
+        })
+
+    col_map = {
+        "endpoint":                   "Endpoint",
+        "model":                      "Model",
+        "brier_before":               "Brier (before)",
+        "brier_after":                "Brier (after)",
+        "brier_skill_score_before":   "BSS (before)",
+        "brier_skill_score_after":    "BSS (after)",
+        "ece_before":                 "ECE (before)",
+        "ece_after":                  "ECE (after)",
+        "cal_slope_before":           "Slope (before)",
+        "cal_slope_after":            "Slope (after)",
+        "cal_intercept_before":       "Intercept (before)",
+        "cal_intercept_after":        "Intercept (after)",
+        "interpretation":             "Interpretation",
+    }
+
+    df_out = pd.DataFrame(rows_out)
+    _save(df_out, out_csv, "calibration.csv")
+
+    md = [
+        "# Calibration Analysis Summary",
+        "",
+        "Calibration metrics before and after logistic recalibration (Platt scaling  ",
+        "on val-split logit(predicted probabilities)).  ",
+        "**BSS** = Brier skill score (1 − Brier / Brier_null); higher is better; < 0 = worse than naive.  ",
+        "**ECE** = expected calibration error (10 equal-width bins); lower is better.  ",
+        "**Slope** b ≈ 1 → well-spread; b < 1 → over-confident; b > 1 → under-confident.",
+        "",
+        *_md_table(df_out, col_map),
+        "",
+    ]
+    _write_md(md, out_md, "calibration.md")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -645,6 +786,10 @@ def main() -> None:
     build_core_count_summary(
         REPORTS_DIR / "final_core_count_audit_summary.csv",
         REPORTS_DIR / "final_core_count_audit_summary.md",
+    )
+    build_calibration_table(
+        REPORTS_DIR / "final_calibration_table.csv",
+        REPORTS_DIR / "final_calibration_table.md",
     )
 
     print("\nDone.")
