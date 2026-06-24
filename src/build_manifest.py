@@ -24,30 +24,53 @@ DICOM_ROOT = DATA_DIR / "dicom" / "manifest-1774220151712" / "Prostate-MRI-US-Bi
 BIOPSY_XLSX = DATA_DIR / "raw" / "TCIA-Biopsy-Data_2020-07-14.xlsx"
 
 
+def grade_group(gleason: str) -> int:
+    """Return the ISUP Grade Group (0–5) for a Gleason score string.
+
+    Follows the ISUP 2014 Grade Group definitions:
+      0 = Benign / missing
+      1 = 3+3=6
+      2 = 3+4=7
+      3 = 4+3=7
+      4 = 4+4=8, 3+5=8, 5+3=8
+      5 = 4+5=9, 5+4=9, 5+5=10
+
+    The input is parsed as "P+S" (spaces are stripped), so "3+4" and "3 + 4"
+    are both valid.  Returns 0 for any unparseable input.
+    """
+    gleason = str(gleason).strip().replace(" ", "")
+    if "+" not in gleason:
+        return 0
+    try:
+        p_str, s_str = gleason.split("+", 1)
+        p, s = int(p_str), int(s_str)
+    except ValueError:
+        return 0
+    total = p + s
+    if total <= 6:       # 3+3=6
+        return 1
+    if total == 7:       # 3+4=7 → GG2 ; 4+3=7 → GG3
+        return 2 if p == 3 else 3
+    if total == 8:       # 4+4, 3+5, 5+3 → GG4
+        return 4
+    return 5             # 4+5, 5+4, 5+5 → GG5
+
+
 # ── 1. Load the spreadsheet ────────────────────────────────────────────────────
 
 def load_biopsy_spreadsheet(path: Path) -> pd.DataFrame:
     df = pd.read_excel(path)
 
-    # Assign Gleason Grade Group label
-    def grade_group(row):
+    # Assign Gleason Grade Group label using ISUP 2014 definitions
+    def _grade_group_from_row(row):
         pg = row["Primary Gleason"]
         sg = row["Secondary Gleason"]
         if pd.isna(pg) or pd.isna(sg):
             return "Benign"
-        total = pg + sg
-        if pg == 3 and sg == 3:
-            return "GG1"
-        elif pg == 3 and sg == 4:
-            return "GG2"
-        elif pg == 4 and sg == 3:
-            return "GG3"
-        elif total == 8:
-            return "GG4"
-        else:  # total >= 9
-            return "GG5"
+        gg = grade_group(f"{int(pg)}+{int(sg)}")
+        return f"GG{gg}" if gg > 0 else "Benign"
 
-    df["gleason_grade"] = df.apply(grade_group, axis=1)
+    df["gleason_grade"] = df.apply(_grade_group_from_row, axis=1)
 
     # Rename for convenience
     df = df.rename(columns={
