@@ -52,10 +52,13 @@ GLEASON_PATTERN = {
 
 def grade_group_pipeline(primary, secondary) -> str:
     """
-    Grade group as implemented in src/build_manifest.py (pipeline reference).
+    Historical grade group as implemented in the original src/build_manifest.py
+    (pipeline reference — preserved here to audit what logic was used when
+    needle_features_v1.csv was generated).
 
-    BUG: the branch `if p == 3` fires before the Gleason-sum-8 check, so
-    Gleason 3+5=8 is returned as GG2 instead of the ISUP-correct GG4.
+    HISTORICAL BUG (now fixed in src/build_manifest.py): the branch `if p == 3`
+    fires before the Gleason-sum-8 check, so Gleason 3+5=8 was returned as GG2
+    instead of the ISUP-correct GG4.
     Kept here for comparison only — do NOT use for new labels.
     """
     if pd.isna(primary) or pd.isna(secondary):
@@ -191,9 +194,9 @@ def main() -> None:
         "",
         "Two grade-group functions are evaluated:",
         "",
-        "| Function | Source | Known issue |",
+        "| Function | Source | Status |",
         "|---|---|---|",
-        "| `grade_group_pipeline()` | `src/build_manifest.py` | Gleason 3+5=8 → GG2 (wrong; should be GG4) |",
+        "| `grade_group_pipeline()` | original `src/build_manifest.py` | Historical bug: Gleason 3+5=8 → GG2 (should be GG4). **Source now fixed; CSV not yet regenerated.** |",
         "| `grade_group_isup()` | this script | Clinically correct ISUP 2014 standard |",
         "",
     ]
@@ -240,10 +243,15 @@ def main() -> None:
             )
         lines.append("")
         lines += [
-            "> **Note for `build_manifest.py`:** the `if p == 3` branch fires before",
-            "> the `if g == 8` check, so Gleason 3+5=8 is classified as GG2 instead",
-            "> of GG4. `build_manifest.py` is **not modified here** — the discrepancy",
-            "> is documented for a future fix.",
+            "> **Dataset-generation note:** in the original pipeline the `if p == 3`",
+            "> branch fired before the `if g == 8` check, so Gleason 3+5=8 was",
+            "> classified as GG2 instead of GG4 when `needle_features_v1.csv` was built.",
+            ">",
+            "> **Source-code status:** `src/build_manifest.py::grade_group` has now been",
+            "> fixed to follow the ISUP 2014 standard.",
+            ">",
+            "> **Dataset status:** `needle_features_v1.csv` was generated before that fix,",
+            "> so the 36-row discrepancy remains in this CSV until the dataset is regenerated.",
             "",
         ]
 
@@ -381,18 +389,20 @@ def main() -> None:
     print(f"Added column binary_label_gg3plus_int -> {DATA_PATH.relative_to(REPO_ROOT)}")
 
     lines += [
-        "## 6. Next steps",
+        "## 6. Status and next steps",
         "",
         f"Column `binary_label_gg3plus_int` has been written to `{DATA_PATH.relative_to(REPO_ROOT)}`.",
         "",
-        "**Pending fix — `src/build_manifest.py`:**",
-        "The `grade_group()` function there misclassifies Gleason 3+5=8 as GG2.",
-        "It should be updated to use the ISUP-correct logic (`grade_group_isup` above).",
-        "This is left for a separate commit to avoid touching the pipeline mid-audit.",
+        "**Source-code status — `src/build_manifest.py`:**",
+        "`grade_group()` has been corrected to follow the ISUP 2014 standard.",
+        "Gleason 3+5=8 now correctly maps to GG4.",
         "",
-        "**Action required in `src/run_shareable_tabular_experiments.py`:**",
-        "Change `TARGET_COL = 'binary_label_int'` to `TARGET_COL = 'binary_label_gg3plus_int'`",
-        "to train and evaluate models on the GG3+ task.",
+        "**Dataset status — `data/share/needle_features_v1.csv`:**",
+        "This CSV was generated before the source fix.",
+        "The 36 Gleason 3+5=8 cores remain labelled with the historical pipeline grade",
+        "group until the shareable dataset is regenerated from the corrected pipeline.",
+        "Downstream analyses use the ISUP-correct derived endpoint (`binary_label_gg3plus_int`)",
+        "so they are not affected by this historical discrepancy.",
         "",
     ]
 

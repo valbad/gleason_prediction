@@ -138,9 +138,9 @@ Source: `data/share/needle_features_v1.csv`  (18,176 rows total)
 
 Two grade-group functions are evaluated:
 
-| Function | Source | Known issue |
+| Function | Source | Status |
 |---|---|---|
-| `grade_group_pipeline()` | `src/build_manifest.py` | Gleason 3+5=8 → GG2 (wrong; should be GG4) |
+| `grade_group_pipeline()` | original `src/build_manifest.py` | Historical bug: Gleason 3+5=8 → GG2 (should be GG4). **Source now fixed; CSV not yet regenerated.** |
 | `grade_group_isup()` | this script | Clinically correct ISUP 2014 standard |
 
 Rows where the two functions assign a **different grade group**: **36**
@@ -152,10 +152,15 @@ Rows where the two functions assign a **different grade group**: **36**
 |---|---|---|---|---|
 | 3 | 5 | GG2 | GG4 | 36 |
 
-> **Note for `build_manifest.py`:** the `if p == 3` branch fires before
-> the `if g == 8` check, so Gleason 3+5=8 is classified as GG2 instead
-> of GG4. `build_manifest.py` is **not modified here** — the discrepancy
-> is documented for a future fix.
+> **Dataset-generation note:** in the original pipeline the `if p == 3`
+> branch fired before the `if g == 8` check, so Gleason 3+5=8 was
+> classified as GG2 instead of GG4 when `needle_features_v1.csv` was built.
+>
+> **Source-code status:** `src/build_manifest.py::grade_group` has now been
+> fixed to follow the ISUP 2014 standard.
+>
+> **Dataset status:** `needle_features_v1.csv` was generated before that fix,
+> so the 36-row discrepancy remains in this CSV until the dataset is regenerated.
 
 ### ISUP grade group distribution (used for all downstream steps)
 
@@ -245,16 +250,18 @@ even though some clinical definitions of clinically significant PCa require GG3+
 | test | 2,417 | 0.107 (10.7%) | 0.038 (3.8%) |
 | ALL | 16,992 | 0.111 (11.1%) | 0.038 (3.8%) |
 
-## 6. Next steps
+## 6. Status and next steps
 
 Column `binary_label_gg3plus_int` has been written to `data/share/needle_features_v1.csv`.
 
-**Pending fix — `src/build_manifest.py`:**
-The `grade_group()` function there misclassifies Gleason 3+5=8 as GG2.
-It should be updated to use the ISUP-correct logic (`grade_group_isup` above).
-This is left for a separate commit to avoid touching the pipeline mid-audit.
+**Source-code status — `src/build_manifest.py`:**
+`grade_group()` has been corrected to follow the ISUP 2014 standard.
+Gleason 3+5=8 now correctly maps to GG4.
 
-**Action required in `src/run_shareable_tabular_experiments.py`:**
-Change `TARGET_COL = 'binary_label_int'` to `TARGET_COL = 'binary_label_gg3plus_int'`
-to train and evaluate models on the GG3+ task.
+**Dataset status — `data/share/needle_features_v1.csv`:**
+This CSV was generated before the source fix.
+The 36 Gleason 3+5=8 cores remain labelled with the historical pipeline grade
+group until the shareable dataset is regenerated from the corrected pipeline.
+Downstream analyses use the ISUP-correct derived endpoint (`binary_label_gg3plus_int`)
+so they are not affected by this historical discrepancy.
 
