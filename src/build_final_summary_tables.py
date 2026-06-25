@@ -13,6 +13,7 @@ Inputs
   reports/univariate_geometry_effects.csv
   reports/patient_level_performance.csv
   reports/core_counts_by_patient_audit.csv
+  reports/feature_importance.csv
 
 Outputs
 -------
@@ -21,6 +22,8 @@ Outputs
   reports/final_risk_stratification_table.csv / .md
   reports/final_patient_level_table.csv / .md
   reports/final_core_count_audit_summary.csv / .md
+  reports/final_calibration_table.csv / .md
+  reports/final_feature_importance_table.csv / .md
 
 Usage
 -----
@@ -57,6 +60,24 @@ UNIVARIATE_FEATURES = [
     "psa_density",
     "log_psa_ng_ml",
 ]
+
+# Feature-category sets for permutation importance interpretation.
+# Must match the definitions in analyze_feature_importance.py.
+_FI_TARGET_GEO = frozenset({
+    "distance_midpoint_to_target_centroid_mm",
+    "distance_midpoint_to_target_surface_mm",
+    "trajectory_intersects_target",
+    "approximate_fraction_of_centerline_inside_target",
+})
+_FI_PROSTATE_GEO = frozenset({
+    "core_length_mm",
+    "n_centerline_voxels",
+    "n_tube_voxels",
+    "midpoint_inside_prostate",
+    "distance_midpoint_to_prostate_surface_mm",
+    "approximate_fraction_of_centerline_inside_prostate",
+})
+_FI_PSA_KEY = frozenset({"psa_density", "log_psa_ng_ml"})
 
 
 # ── Shared utilities ──────────────────────────────────────────────────────────
@@ -761,6 +782,190 @@ def build_calibration_table(out_csv: Path, out_md: Path) -> None:
     _write_md(md, out_md, "calibration.md")
 
 
+# ── 7. Feature importance table ──────────────────────────────────────────────
+
+def _fi_interpret(df_ep: pd.DataFrame) -> str:
+    """
+    Generate a concise 2–3 sentence interpretation from one (endpoint, model) slice
+    of the feature importance DataFrame.  Mirrors the logic in
+    analyze_feature_importance._interpret() but returns a single string suitable
+    for embedding in a summary table cell.
+    """
+    df_roc = df_ep.sort_values("roc_auc_drop_mean", ascending=False).reset_index(drop=True)
+    n = len(df_roc)
+
+    # Target geometry share
+    pos_total = float(df_ep["roc_auc_drop_mean"].clip(lower=0).sum())
+    tgt_pos   = float(df_ep[df_ep["feature"].isin(_FI_TARGET_GEO)]["roc_auc_drop_mean"].clip(lower=0).sum())
+    tgt_pct   = tgt_pos / pos_total * 100 if pos_total > 0 else 0.0
+
+    # Best PSA-key variable
+    psa_idxs = df_roc.index[df_roc["feature"].isin(_FI_PSA_KEY)].tolist()
+    psa_rank = psa_idxs[0] + 1 if psa_idxs else None
+    psa_drop = float(df_roc.loc[psa_idxs[0], "roc_auc_drop_mean"]) if psa_idxs else 0.0
+
+    psa_density_rows = df_roc[df_roc["feature"] == "psa_density"]
+    psa_density_drop = float(psa_density_rows.iloc[0]["roc_auc_drop_mean"]) if len(psa_density_rows) else 0.0
+
+    # Prostate/biopsy geometry
+    bio_drops = df_ep[df_ep["feature"].isin(_FI_PROSTATE_GEO)]["roc_auc_drop_mean"]
+    bio_max   = float(bio_drops.max()) if len(bio_drops) > 0 else 0.0
+
+    # Stability
+    top5 = df_roc.head(5)
+    n_noisy = int((top5["roc_auc_drop_std"] > top5["roc_auc_drop_mean"].abs()).sum())
+
+    parts: list[str] = []
+
+    # 1. Target geometry
+    if tgt_pct > 50:
+        parts.append(f"Target geometry dominates (~{tgt_pct:.0f}% of positive ROC-AUC importance).")
+    else:
+        parts.append(f"Target geometry contributes ~{tgt_pct:.0f}% of positive ROC-AUC importance.")
+
+    # 2. Clinical / PSA (always include the correlation caveat)
+    top_half = max(1, n // 2)
+    if psa_rank is not None and psa_rank <= top_half and psa_drop > 0:
+        parts.append(
+            f"PSA-related variables contribute meaningfully (best PSA feature ranked #{psa_rank}); "
+            f"importance may be distributed across correlated clinical features."
+        )
+    else:
+        parts.append(
+            f"Clinical signal is present but distributed across correlated PSA variables "
+            f"(psa_density drop = {psa_density_drop:.4f}); "
+            f"low individual importance does not imply absence of clinical value."
+        )
+
+    # 3. Prostate / biopsy geometry
+    if bio_max > 0.005:
+        parts.append(f"Prostate/biopsy geometry adds signal (max drop = {bio_max:.4f}).")
+    else:
+        parts.append("Prostate/biopsy geometry adds little incremental signal in this model.")
+
+    # 4. Stability
+    if n_noisy >= 2:
+        parts.append(f"Stability moderate: {n_noisy} of top-5 features have std > mean importance.")
+    elif n_noisy == 0:
+        parts.append("Results stable (std < mean for all top-5 features).")
+
+    return " ".join(parts)
+
+
+def build_feature_importance_table(out_csv: Path, out_md: Path) -> None:
+    print("\n[7] Feature importance table")
+
+    df = _load(REPORTS_DIR / "feature_importance.csv", "feature_importance")
+    if df is None:
+        _write_md(
+            _missing_section("Feature Importance", "feature_importance.csv"),
+            out_md, "feature_importance.md (empty)",
+        )
+        return
+
+    # One row per (label_col, model, feature) enriched with per-group ranks.
+    rows_out: list[dict] = []
+    for (lc, model), grp in df.groupby(["label_col", "model"]):
+        grp = grp.copy()
+        grp["roc_auc_rank"] = grp["roc_auc_drop_mean"].rank(ascending=False, method="min").astype(int)
+        grp["pr_auc_rank"]  = grp["pr_auc_drop_mean"].rank(ascending=False, method="min").astype(int)
+        for _, r in grp.iterrows():
+            rows_out.append({
+                "label_col":         lc,
+                "endpoint":          LABEL_SHORT.get(lc, lc),
+                "model":             model,
+                "feature":           r["feature"],
+                "baseline_roc_auc":  r["baseline_roc_auc"],
+                "baseline_pr_auc":   r["baseline_pr_auc"],
+                "roc_auc_rank":      int(r["roc_auc_rank"]),
+                "pr_auc_rank":       int(r["pr_auc_rank"]),
+                "roc_auc_drop_mean": r["roc_auc_drop_mean"],
+                "roc_auc_drop_std":  r["roc_auc_drop_std"],
+                "pr_auc_drop_mean":  r["pr_auc_drop_mean"],
+                "pr_auc_drop_std":   r["pr_auc_drop_std"],
+            })
+
+    df_out = pd.DataFrame(rows_out)
+    _save(df_out, out_csv, "feature_importance.csv")
+
+    # ── Markdown ──────────────────────────────────────────────────────────────
+    md: list[str] = [
+        "# Feature Importance — Permutation Analysis (Summary)",
+        "",
+        "Feature set: `all_geometry_no_availability_plus_clinical` "
+        "(biopsy geometry ×6 + target geometry no availability ×4 + clinical ×4).  ",
+        "**Importance** = mean decrease in test metric when a feature is permuted.  ",
+        "Positive = feature helps; near-zero or negative = no reliable contribution.",
+        "",
+        "> **Correlation caveat:** importance may be shared or masked among correlated "
+        "predictors. The clinical features (psa_ng_ml, log_psa_ng_ml, prostate_volume_cc, "
+        "psa_density) are correlated — low individual importance does not imply absence "
+        "of clinical value.",
+        "",
+    ]
+
+    # Determine the (label_col, model) order: follow ENDPOINT_MODELS order from the CSV
+    seen: list[tuple] = []
+    for lc, model in df[["label_col", "model"]].drop_duplicates().itertuples(index=False):
+        seen.append((lc, model))
+    # Sort by LABEL_COLS order, then model name for determinism
+    lc_order = {lc: i for i, lc in enumerate(LABEL_COLS)}
+    seen.sort(key=lambda t: (lc_order.get(t[0], 99), t[1]))
+
+    for lc, model in seen:
+        ep_label = LABEL_SHORT.get(lc, lc)
+        grp = df_out[(df_out["label_col"] == lc) & (df_out["model"] == model)].copy()
+        if grp.empty:
+            continue
+
+        baseline_roc = grp["baseline_roc_auc"].iloc[0]
+        baseline_pr  = grp["baseline_pr_auc"].iloc[0]
+        interpretation = _fi_interpret(grp)
+
+        md += [
+            "---",
+            "",
+            f"## {ep_label} — {model}",
+            "",
+            f"Baseline test ROC-AUC: **{_f(baseline_roc)}**  ·  "
+            f"Baseline test PR-AUC: **{_f(baseline_pr)}**",
+            "",
+            "### Top 5 features by ROC-AUC importance",
+            "",
+            "| # | Feature | ROC-AUC drop | ± std | PR-AUC drop | ± std |",
+            "|---|---|---|---|---|---|",
+        ]
+        top5_roc = grp.sort_values("roc_auc_drop_mean", ascending=False).head(5)
+        for rank, (_, r) in enumerate(top5_roc.iterrows(), 1):
+            md.append(
+                f"| {rank} | `{r['feature']}` "
+                f"| {_f(r['roc_auc_drop_mean'], 4)} "
+                f"| ±{_f(r['roc_auc_drop_std'], 4)} "
+                f"| {_f(r['pr_auc_drop_mean'], 4)} "
+                f"| ±{_f(r['pr_auc_drop_std'], 4)} |"
+            )
+        md.append("")
+
+        md += [
+            "### Top 5 features by PR-AUC importance",
+            "",
+            "| # | Feature | PR-AUC drop | ± std | ROC-AUC drop | ± std |",
+            "|---|---|---|---|---|---|",
+        ]
+        top5_pr = grp.sort_values("pr_auc_drop_mean", ascending=False).head(5)
+        for rank, (_, r) in enumerate(top5_pr.iterrows(), 1):
+            md.append(
+                f"| {rank} | `{r['feature']}` "
+                f"| {_f(r['pr_auc_drop_mean'], 4)} "
+                f"| ±{_f(r['pr_auc_drop_std'], 4)} "
+                f"| {_f(r['roc_auc_drop_mean'], 4)} "
+                f"| ±{_f(r['roc_auc_drop_std'], 4)} |"
+            )
+        md += ["", f"**Interpretation:** {interpretation}", ""]
+
+    _write_md(md, out_md, "feature_importance.md")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -790,6 +995,10 @@ def main() -> None:
     build_calibration_table(
         REPORTS_DIR / "final_calibration_table.csv",
         REPORTS_DIR / "final_calibration_table.md",
+    )
+    build_feature_importance_table(
+        REPORTS_DIR / "final_feature_importance_table.csv",
+        REPORTS_DIR / "final_feature_importance_table.md",
     )
 
     print("\nDone.")
