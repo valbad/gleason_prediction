@@ -311,6 +311,21 @@ model is more reliable for ranking than for absolute probability estimation.
 
 ---
 
+## Phase 1 — Compact vs full geometry-clinical model comparison
+
+We compared six feature sets across both endpoints (GG2+ / csPCa and GG3+ / high-grade): clinical only, target geometry only, target geometry + clinical, biopsy/prostate geometry + clinical, all geometry without clinical, and all geometry + clinical.
+
+The compact `target_geometry_plus_clinical` feature set captured nearly all the predictive signal of the full `all_geometry_no_availability_plus_clinical` model. Averaged across models, the full-vs-compact delta was negligible for both endpoints:
+- GG2+ / csPCa: ΔROC = -0.002, ΔPR = 0.000
+- GG3+ / high-grade: ΔROC = -0.005, ΔPR = 0.008
+
+The geometry-only comparison also showed limited gain from adding non-target biopsy/prostate geometry to target-relative geometry. The `biopsy_prostate_geometry_plus_clinical` feature set should be interpreted as a negative-control comparison rather than an incremental-value test: it confirms that target-relative geometry, not biopsy/prostate geometry alone, drives most of the geometric signal.
+
+Decision:
+`target_geometry_plus_clinical` is selected as the preferred central feature set for the paper on parsimony and interpretability grounds. The full geometry-clinical model will be retained as a sensitivity/reference analysis.
+
+---
+
 ## 12. Recommended Next Steps
 
 1. **Fix `build_manifest.py` Gleason mapping.** Correct the `grade_group()`
