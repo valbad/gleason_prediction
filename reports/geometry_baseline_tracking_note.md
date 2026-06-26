@@ -326,6 +326,25 @@ Decision:
 
 ---
 
+## Phase 2 — Direct patient-level modelling
+
+We built direct patient-level models using one row per patient. Patient labels were defined as positive if at least one biopsy core was positive for the endpoint. Core-level geometry features were aggregated into patient-level summaries, then combined with clinical variables.
+
+For GG2+ / csPCa, direct patient-level modelling performed similarly to the previous naive aggregation of core-level scores:
+- Previous naive aggregation best: ROC-AUC 0.617, PR-AUC 0.695
+- Direct patient-level best: ROC-AUC 0.613, PR-AUC 0.697
+
+For GG3+ / high-grade, direct patient-level modelling slightly improved ROC-AUC but not PR-AUC:
+- Previous naive aggregation best: ROC-AUC 0.682, PR-AUC 0.512
+- Direct patient-level best: ROC-AUC 0.706, PR-AUC 0.498
+
+Patient-level prediction remained weaker than core-level prediction for both endpoints. This supports the interpretation that the strongest geometric signal is local and core-level. Patient-level models should therefore be reported as secondary or exploratory analyses, while the main paper framing should remain centered on core-level risk stratification.
+
+Decision:
+Direct patient-level modelling does not replace the core-level analysis as the primary result. It is useful as a methodological check addressing patient-level aggregation, but the main contribution remains the interpretable core-level target-relative geometry signal.
+
+---
+
 ## 12. Recommended Next Steps
 
 1. **Fix `build_manifest.py` Gleason mapping.** Correct the `grade_group()`
