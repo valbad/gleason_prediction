@@ -345,6 +345,27 @@ Direct patient-level modelling does not replace the core-level analysis as the p
 
 ---
 
+## Phase 3 — Grouped core-level inference
+
+We assessed whether the compact `target_geometry_plus_clinical` associations remain present after accounting for intra-patient correlation among biopsy cores. We fitted core-level logistic regression models with cluster-robust standard errors grouped by patient, and a secondary GEE analysis with exchangeable working correlation.
+
+For both endpoints, `distance_midpoint_to_target_surface_mm` remained negatively associated with positivity after patient-cluster adjustment:
+- GG2+ / csPCa: OR 0.468, p < 0.001
+- GG3+ / high-grade: OR 0.323, p < 0.001
+
+The secondary GEE analysis was concordant:
+- GG2+ / csPCa: OR 0.581, p < 0.001
+- GG3+ / high-grade: OR 0.441, p < 0.001
+
+`approximate_fraction_of_centerline_inside_target` was also positively associated with both endpoints. In contrast, `trajectory_intersects_target` was not individually significant once continuous distance and fraction-inside features were included, likely because it is highly redundant with fraction-inside.
+
+Clinical PSA-related variables contributed signal, but their individual coefficients should be interpreted cautiously because PSA, log-PSA, prostate volume and PSA density are correlated.
+
+Decision:
+The grouped inference analysis supports the compact `target_geometry_plus_clinical` model as the central interpretable association model. It also strengthens the main methodological claim that target-relative biopsy geometry carries a core-level signal that is not solely an artefact of repeated correlated cores within patients.
+
+---
+
 ## 12. Recommended Next Steps
 
 1. **Fix `build_manifest.py` Gleason mapping.** Correct the `grade_group()`
